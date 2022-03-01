@@ -2,29 +2,23 @@ import { useState } from 'react';
 import { GetStaticProps } from 'next';
 import Head from 'next/head';
 import Link from 'next/link';
-import Prismic from '@prismicio/client';
+
 import { FiCalendar, FiUser } from 'react-icons/fi';
+
+import Prismic from '@prismicio/client';
+
 import { getPrismicClient } from '../services/prismic';
-import { dateFormat } from '../utils/dateFormat';
 
 import commonStyles from '../styles/common.module.scss';
 import styles from './home.module.scss';
 
 import Header from '../components/Header';
 
+import { formatDate } from '../utils';
+
 interface Post {
   uid?: string;
   first_publication_date: string | null;
-  data: {
-    title: string;
-    subtitle: string;
-    author: string;
-  };
-}
-
-interface PostProps {
-  slugs: string[];
-  last_publication_date: string;
   data: {
     title: string;
     subtitle: string;
@@ -39,38 +33,45 @@ interface PostPagination {
 
 interface HomeProps {
   postsPagination: PostPagination;
+  preview: boolean;
 }
 
-export default function Home({ postsPagination }: HomeProps): JSX.Element {
-  const [posts, setPosts] = useState<Post[]>(postsPagination.results);
+export default function Home({
+  postsPagination,
+  preview,
+}: HomeProps): JSX.Element {
   const [nextPage, setNextPage] = useState<string>(postsPagination.next_page);
 
-  async function handleLoadPost(): Promise<void> {
-    return fetch(postsPagination.next_page)
-      .then(data => data.json())
-      .then(response => {
-        response.results.map((post: PostProps) => {
-          const dataPost = {
-            uid: post.slugs[0],
-            first_publication_date: dateFormat(post.last_publication_date),
-            data: {
-              title: post.data.title,
-              subtitle: post.data.subtitle,
-              author: post.data.author,
-            },
-          };
+  const formattedPosts = postsPagination.results.map(post => {
+    return {
+      ...post,
+      first_publication_date: formatDate(post.first_publication_date),
+    };
+  });
 
-          setPosts([dataPost, ...posts]);
-        });
+  const [posts, setPosts] = useState<Post[]>(formattedPosts);
 
-        setNextPage(response.next_page);
-      });
+  async function handleLoadMorePosts(): Promise<void> {
+    const newPostsPagination = await fetch(nextPage).then(response =>
+      response.json()
+    );
+
+    setNextPage(newPostsPagination.next_page);
+
+    const newFormattedPosts = newPostsPagination.results.map(post => {
+      return {
+        ...post,
+        first_publication_date: formatDate(post.first_publication_date),
+      };
+    });
+
+    setPosts([...posts, ...newFormattedPosts]);
   }
 
   return (
     <>
       <Head>
-        <title>Posts | ig.news | Desafio 03</title>
+        <title>Home | spacetraveling</title>
       </Head>
 
       <main className={commonStyles.container}>
@@ -94,36 +95,41 @@ export default function Home({ postsPagination }: HomeProps): JSX.Element {
               </a>
             </Link>
           ))}
+          {nextPage && (
+            <button type="button" onClick={handleLoadMorePosts}>
+              Carregar mais posts
+            </button>
+          )}
+          {preview && (
+            <aside>
+              <Link href="/api/exit-preview">
+                <a className={commonStyles.preview}>Sair do modo Preview</a>
+              </Link>
+            </aside>
+          )}
         </div>
-        {nextPage && (
-          <button
-            onClick={handleLoadPost}
-            type="button"
-            className={styles.button}
-          >
-            Carregar mais posts
-          </button>
-        )}
       </main>
     </>
   );
 }
 
-export const getStaticProps: GetStaticProps = async () => {
+export const getStaticProps: GetStaticProps = async ({
+  preview = false,
+  previewData,
+}) => {
   const prismic = getPrismicClient();
-
   const postsResponse = await prismic.query(
     [Prismic.predicates.at('document.type', 'posts')],
     {
-      fetch: ['posts.title', 'posts.subtitle', 'posts.author'],
       pageSize: 1,
+      ref: previewData?.ref ?? null,
     }
   );
 
   const posts = postsResponse.results.map(post => {
     return {
       uid: post.uid,
-      first_publication_date: dateFormat(post.last_publication_date),
+      first_publication_date: post.first_publication_date,
       data: {
         title: post.data.title,
         subtitle: post.data.subtitle,
@@ -132,13 +138,16 @@ export const getStaticProps: GetStaticProps = async () => {
     };
   });
 
+  const postsPagination = {
+    next_page: postsResponse.next_page,
+    results: posts,
+  };
+
   return {
     props: {
-      postsPagination: {
-        next_page: postsResponse.next_page,
-        results: posts,
-      },
+      postsPagination,
+      preview,
     },
-    revalidate: 60 * 60, // 1 hora
+    revalidate: 60 * 60, // 1 hour
   };
 };
